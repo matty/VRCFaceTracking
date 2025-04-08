@@ -101,6 +101,7 @@ public partial class App : Application
 
             // Add lifecycle and shutdown services
             services.AddSingleton<IApplicationLifecycleService, ApplicationLifecycleService>();
+            services.AddSingleton<ISingleInstanceManager, SingleInstanceManager>();
             services.AddSingleton<IShutdownManager, ShutdownManager>();
             services.AddSingleton<ShutdownManager>(provider =>
                 new ShutdownManager(
@@ -171,22 +172,38 @@ public partial class App : Application
 
         Current.UnhandledException += ExceptionHandler;
 
-        // Kill any other instances of VRCFaceTracking.exe
-        foreach (var proc in Process.GetProcessesByName("VRCFaceTracking"))
+        // Ensure this is the only instance of the application running
+        var singleInstanceManager = App.GetService<ISingleInstanceManager>();
+        if (!singleInstanceManager.EnsureSingleInstance())
         {
-            if (proc.Id == Environment.ProcessId)
+            _logger?.LogWarning("Another instance of the application is already running. Exiting this instance.");
+
+            // Show a message dialog to the user before exiting
+            var messageDialog = new Microsoft.UI.Xaml.Controls.ContentDialog
             {
-                continue;
-            }
+                Title = "VRCFaceTracking is already running",
+                Content = "Another instance of VRCFaceTracking is already running. This instance will now close.",
+                CloseButtonText = "OK",
+                XamlRoot = MainWindow.Content?.XamlRoot
+            };
 
             try
             {
-                proc.Kill();
+                // Only proceed with showing the dialog if the XamlRoot is available
+                if (MainWindow.Content?.XamlRoot != null)
+                {
+                    await messageDialog.ShowAsync();
+                }
             }
-            catch
+            catch (Exception ex)
             {
-                _logger?.LogWarning($"Unable to kill PID: {proc.Id}.");
+                _logger?.LogError(ex, "Failed to show dialog about already running instance");
             }
+            finally
+            {
+                Current.Exit();
+            }
+            return;
         }
 
         await App.GetService<IActivationService>().ActivateAsync(args);

@@ -11,13 +11,16 @@ public class ApplicationLifecycleService : IApplicationLifecycleService
 {
     private readonly ILogger<ApplicationLifecycleService> _logger;
     private readonly IShutdownManager _shutdownManager;
+    private readonly ISingleInstanceManager _singleInstanceManager;
 
     public ApplicationLifecycleService(
         ILogger<ApplicationLifecycleService> logger,
-        IShutdownManager shutdownManager)
+        IShutdownManager shutdownManager,
+        ISingleInstanceManager singleInstanceManager)
     {
         _logger = logger;
         _shutdownManager = shutdownManager;
+        _singleInstanceManager = singleInstanceManager;
 
         // Forward shutdown progress events
         _shutdownManager.ShutdownProgress += (sender, args) => ShutdownProgress?.Invoke(this, args);
@@ -41,6 +44,9 @@ public class ApplicationLifecycleService : IApplicationLifecycleService
         {
             // Delegate to the shutdown manager
             await _shutdownManager.PerformShutdownAsync();
+
+            // Dispose the single instance manager to release the mutex
+            _singleInstanceManager?.Dispose();
         }
         catch (Exception ex)
         {
