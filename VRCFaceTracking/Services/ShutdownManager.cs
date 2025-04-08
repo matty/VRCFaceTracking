@@ -107,8 +107,13 @@ public class ShutdownManager : IShutdownManager
 
         try
         {
-            // Ensure Sentry logs are flushed
-            await SentrySdk.FlushAsync(TimeSpan.FromSeconds(3));
+            // Check if Sentry is enabled before flushing
+            var sentryService = App.GetService<SentryService>();
+            if (await sentryService.GetSentryEnabledAsync())
+            {
+                // Ensure Sentry logs are flushed
+                await SentrySdk.FlushAsync(TimeSpan.FromSeconds(3));
+            }
         }
         catch (Exception ex)
         {
