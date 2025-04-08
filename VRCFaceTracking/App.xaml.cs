@@ -38,7 +38,7 @@ public partial class App : Application
     {
         get;
     }
-    
+
     private ILogger? _logger;
 
     public static T GetService<T>()
@@ -57,7 +57,7 @@ public partial class App : Application
     public App()
     {
         InitializeComponent();
-        
+
         // Check for a "reset" file in the root of the app directory. If one is found, wipe all files from inside it
         // and delete the file.
         var resetFile = Path.Combine(VRCFaceTracking.Core.Utils.PersistentDataDirectory, "reset");
@@ -149,15 +149,18 @@ public partial class App : Application
             services.AddTransient<MainPage>();
             services.AddTransient<ShellPage>();
             services.AddTransient<ShellViewModel>();
-            
+
             services.AddHostedService<ParameterSenderService>(provider => provider.GetService<ParameterSenderService>());
             services.AddHostedService<OscRecvService>(provider => provider.GetService<OscRecvService>());
+
+            // Add SentryService to the service collection
+            services.AddSingleton<SentryService>();
 
             // Configuration
             services.Configure<LocalSettingsOptions>(context.Configuration.GetSection(nameof(LocalSettingsOptions)));
         }).
         Build();
-        
+
         var logBuilder = App.GetService<ILoggerFactory>();
         _logger = logBuilder.CreateLogger("App");
     }
@@ -166,24 +169,6 @@ public partial class App : Application
     {
         base.OnLaunched(args);
 
-        SentrySdk.Init(o =>
-        {
-            o.Dsn = "https://444b0799dd2b670efa85d866c8c12134@o4506152235237376.ingest.sentry.io/4506152246575104";
-            o.TracesSampleRate = 1.0;
-            o.AutoSessionTracking = true;
-            #if DEBUG
-            o.Environment = "debug";
-            #else
-            o.Environment = "release";
-            #endif
-            var version = Assembly.GetEntryAssembly()?.GetName().Version;
-            if (version != null)
-            {
-                o.Release = $"{version.Major}.{version.Minor}.{version.Build}.{version.Revision}";
-            }
-
-            o.IsGlobalModeEnabled = true;
-        });
         Current.UnhandledException += ExceptionHandler;
 
         // Kill any other instances of VRCFaceTracking.exe
@@ -203,11 +188,12 @@ public partial class App : Application
                 _logger?.LogWarning($"Unable to kill PID: {proc.Id}.");
             }
         }
-        
+
         await App.GetService<IActivationService>().ActivateAsync(args);
         await Host.StartAsync();
+        await App.GetService<SentryService>().InitializeAsync();
     }
-    
+
     [SecurityCritical]
     internal void ExceptionHandler(object sender, UnhandledExceptionEventArgs e)
     {
@@ -221,7 +207,7 @@ public partial class App : Application
             SentrySdk.CaptureException(exception);
             // Make sure the event is flushed to disk or to Sentry
             SentrySdk.FlushAsync(TimeSpan.FromSeconds(3)).Wait();
-            
+
             _logger?.LogError(exception, "Unhandled exception");
             _logger?.LogCritical("Stacktrace: {0}", exception.StackTrace);
             _logger?.LogCritical("Inner exception: {0}", exception.InnerException);

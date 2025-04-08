@@ -14,10 +14,17 @@ namespace VRCFaceTracking.ViewModels;
 public partial class SettingsViewModel : ObservableRecipient
 {
     private readonly IThemeSelectorService _themeSelectorService;
+    private readonly SentryService _sentryService;
     [ObservableProperty] private ElementTheme _elementTheme;
     [ObservableProperty] private List<GithubContributor> _contributors;
-    
+    [ObservableProperty] private bool _isSentryEnabled;
+
     public ICommand SwitchThemeCommand
+    {
+        get;
+    }
+
+    public ICommand ToggleSentryCommand
     {
         get;
     }
@@ -33,9 +40,10 @@ public partial class SettingsViewModel : ObservableRecipient
         Contributors = await GithubService.GetContributors("benaclejames/VRCFaceTracking");
     }
 
-    public SettingsViewModel(IThemeSelectorService themeSelectorService, GithubService githubService)
+    public SettingsViewModel(IThemeSelectorService themeSelectorService, GithubService githubService, SentryService sentryService)
     {
         _themeSelectorService = themeSelectorService;
+        _sentryService = sentryService;
         GithubService = githubService;
 
         _elementTheme = _themeSelectorService.Theme;
@@ -49,7 +57,20 @@ public partial class SettingsViewModel : ObservableRecipient
                     await _themeSelectorService.SetThemeAsync(param);
                 }
             });
-        
+
+        ToggleSentryCommand = new RelayCommand<bool>(
+            async (enabled) =>
+            {
+                IsSentryEnabled = enabled;
+                await _sentryService.SetSentryEnabledAsync(enabled);
+            });
+
         LoadContributors();
+        LoadSentrySettings();
+    }
+
+    private async void LoadSentrySettings()
+    {
+        IsSentryEnabled = await _sentryService.GetSentryEnabledAsync();
     }
 }
