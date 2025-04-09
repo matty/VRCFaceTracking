@@ -9,6 +9,7 @@ using VRCFaceTracking.Core.Contracts.Services;
 using VRCFaceTracking.Core.Models;
 using VRCFaceTracking.Core.OSC;
 using VRCFaceTracking.Core.Services;
+using VRCFaceTracking.Services.Updates;
 using VRCFaceTracking.Views;
 
 namespace VRCFaceTracking.Services;
@@ -23,18 +24,20 @@ public class ActivationService : IActivationService
     private readonly IModuleDataService _moduleDataService;
     private readonly ModuleInstaller _moduleInstaller;
     private readonly ILibManager _libManager;
+    private readonly IModuleUpdateService _moduleUpdateService;
     private readonly ILogger<ActivationService> _logger;
     private UIElement? _shell;
 
     public ActivationService(
-        ActivationHandler<LaunchActivatedEventArgs> defaultHandler, 
-        IEnumerable<IActivationHandler> activationHandlers, 
-        IThemeSelectorService themeSelectorService, 
+        ActivationHandler<LaunchActivatedEventArgs> defaultHandler,
+        IEnumerable<IActivationHandler> activationHandlers,
+        IThemeSelectorService themeSelectorService,
         OscQueryService parameterOutputService,
-        IMainService mainService, 
-        IModuleDataService moduleDataService, 
-        ModuleInstaller moduleInstaller, 
+        IMainService mainService,
+        IModuleDataService moduleDataService,
+        ModuleInstaller moduleInstaller,
         ILibManager libManager,
+        IModuleUpdateService moduleUpdateService,
         ILogger<ActivationService> logger)
     {
         _defaultHandler = defaultHandler;
@@ -45,6 +48,7 @@ public class ActivationService : IActivationService
         _moduleDataService = moduleDataService;
         _moduleInstaller = moduleInstaller;
         _libManager = libManager;
+        _moduleUpdateService = moduleUpdateService;
         _logger = logger;
     }
 
@@ -95,9 +99,9 @@ public class ActivationService : IActivationService
     private async Task StartupAsync()
     {
         await _themeSelectorService.SetRequestedThemeAsync();
-        
+
         _logger.LogInformation("VRCFT Version {version} initializing...", Assembly.GetExecutingAssembly().GetName().Version);
-        
+
         _logger.LogInformation("Initializing OSC...");
         await _parameterOutputService.InitializeAsync().ConfigureAwait(false);
 
@@ -113,28 +117,13 @@ public class ActivationService : IActivationService
             _moduleInstaller.UninstallModule(deleteModule);
         }
 
-        _logger.LogInformation("Checking for updates for installed modules...");
-        var localModules = _moduleDataService.GetInstalledModules().Where(m => m.ModuleId != Guid.Empty);
-        var remoteModules = await _moduleDataService.GetRemoteModules();
-        var outdatedModules = remoteModules.Where(rm => localModules.Any(lm =>
-        {
-            if (rm.ModuleId != lm.ModuleId) 
-                return false;
+        // Start module update check in the background, don't wait for it
+        _logger.LogInformation("Starting background check for module updates...");
+        _moduleUpdateService.CheckForUpdatesAsync();
 
-            var remoteVersion = new Version(rm.Version);
-            var localVersion = new Version(lm.Version);
-
-            return remoteVersion.CompareTo(localVersion) > 0;
-        }));
-        foreach (var outdatedModule in outdatedModules)
-        {
-            _logger.LogInformation($"Updating {outdatedModule.ModuleName} from {localModules.First(rm => rm.ModuleId == outdatedModule.ModuleId).Version} to {outdatedModule.Version}");
-            await _moduleInstaller.InstallRemoteModule(outdatedModule);
-        }
-        
         _logger.LogInformation("Initializing modules...");
         App.MainWindow.DispatcherQueue.TryEnqueue(() => _libManager.Initialize());
-        
+
         await Task.CompletedTask;
     }
 }

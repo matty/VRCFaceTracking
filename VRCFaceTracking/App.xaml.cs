@@ -20,6 +20,7 @@ using VRCFaceTracking.Core.Params.Data;
 using VRCFaceTracking.Core.Services;
 using VRCFaceTracking.Models;
 using VRCFaceTracking.Services;
+using VRCFaceTracking.Services.Updates;
 using VRCFaceTracking.ViewModels;
 using VRCFaceTracking.Views;
 using UnhandledExceptionEventArgs = Microsoft.UI.Xaml.UnhandledExceptionEventArgs;
@@ -112,6 +113,10 @@ public partial class App : Application
                     provider.GetRequiredService<OscQueryService>(),
                     provider.GetRequiredService<ParameterSenderService>(),
                     provider.GetRequiredService<OscRecvService>()));
+
+            // Add update services
+            services.AddSingleton<IModuleUpdateService, ModuleUpdateService>();
+            services.AddSingleton<UpdateNotificationService>();
 
             // Core Services
             services.AddTransient<IIdentityService, IdentityService>();
@@ -209,6 +214,57 @@ public partial class App : Application
         await App.GetService<IActivationService>().ActivateAsync(args);
         await Host.StartAsync();
         await App.GetService<SentryService>().InitializeAsync();
+
+#if DEBUG
+        // In debug mode, simulate module updates after app is fully initialized
+        _logger?.LogInformation("Debug mode: Will simulate module updates in 5 seconds");
+
+        // Need to ensure the main window and content are fully loaded
+        var timer = new DispatcherTimer();
+        timer.Interval = TimeSpan.FromSeconds(5);
+        timer.Tick += (s, e) =>
+        {
+            timer.Stop();
+
+            try
+            {
+                var updateService = App.GetService<IModuleUpdateService>();
+                var notificationService = App.GetService<UpdateNotificationService>();
+
+                if (updateService is ModuleUpdateService moduleUpdateService)
+                {
+                    _logger?.LogInformation("Debug mode: Simulating module updates now");
+
+                    // Create fake modules for testing
+                    var fakeModules = new List<InstallableTrackingModule>
+                    {
+                        new InstallableTrackingModule
+                        {
+                            ModuleId = Guid.NewGuid(),
+                            ModuleName = "Test Eye Tracker",
+                            Version = "1.2.0",
+                            InstallationState = InstallState.Installed
+                        },
+                        new InstallableTrackingModule
+                        {
+                            ModuleId = Guid.NewGuid(),
+                            ModuleName = "Test Lip Tracker",
+                            Version = "2.1.5",
+                            InstallationState = InstallState.Installed
+                        }
+                    };
+
+                    // Simulate updates
+                    moduleUpdateService.SimulateUpdatesAvailable(fakeModules);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex, "Debug mode: Failed to simulate module updates");
+            }
+        };
+        timer.Start();
+#endif
     }
 
     [SecurityCritical]
