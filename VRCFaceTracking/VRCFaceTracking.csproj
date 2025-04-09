@@ -47,6 +47,7 @@
     <None Remove="solution-config.props.sample" />
     <None Remove="global.json" />
     <None Remove="VRCFaceTracking\ReadMe.md" />
+    <Page Remove="Controls\UpdateNotification.xaml" />
   </ItemGroup>
 
   <ItemGroup>

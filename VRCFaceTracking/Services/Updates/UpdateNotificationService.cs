@@ -1,8 +1,8 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
-using VRCFaceTracking.Controls;
 using VRCFaceTracking.Contracts.Services;
 using VRCFaceTracking.Core.Contracts.Services;
 using VRCFaceTracking.Core.Models;
@@ -15,6 +15,10 @@ public class UpdateNotificationService
     private readonly IModuleUpdateService _moduleUpdateService;
     private readonly ILogger<UpdateNotificationService> _logger;
     private readonly IDispatcherService _dispatcherService;
+
+    private IEnumerable<InstallableTrackingModule>? _availableUpdates;
+    private bool _isUpdating = false;
+    private ContentDialog? _updateDialog;
 
     public UpdateNotificationService(
         IModuleUpdateService moduleUpdateService,
@@ -32,70 +36,96 @@ public class UpdateNotificationService
 
     private void OnModuleUpdatesAvailable(object? sender, ModuleUpdatesAvailableEventArgs e)
     {
-        _logger.LogInformation("Received notification of {count} available module updates", e.AvailableUpdates.Count());
+        var updates = e.AvailableUpdates;
+        if (updates == null || !updates.Any())
+        {
+            _logger.LogInformation("No updates available");
+            return;
+        }
 
-        // Use ContentDialog instead of TeachingTip as it's more reliable
-        _dispatcherService.Run(() => ShowUpdateContentDialog(e.AvailableUpdates));
+        _logger.LogInformation("Received notification of {count} available module updates", updates.Count());
+        _availableUpdates = updates;
+
+        // Show update dialog on the UI thread
+        _dispatcherService.Run(() => ShowUpdateDialog());
     }
 
-    private async void ShowUpdateContentDialog(IEnumerable<InstallableTrackingModule> updates)
+    private void ShowUpdateDialog()
     {
         try
         {
-            _logger.LogInformation("Showing ContentDialog for updates");
+            // Ensure we have the MainWindow
+            var mainWindow = App.MainWindow;
 
-            // Ensure we have the XamlRoot
-            var xamlRoot = App.MainWindow.Content?.XamlRoot;
-            if (xamlRoot == null)
+            // Create and show the update dialog
+            _updateDialog = new ContentDialog
             {
-                _logger.LogWarning("Cannot show dialog - XamlRoot is null");
-                return;
-            }
-
-            var moduleNames = string.Join(", ", updates.Select(u => u.ModuleName));
-            var dialog = new ContentDialog
-            {
-                Title = "Module Updates Available",
-                Content = $"Updates are available for the following modules: {moduleNames}. Would you like to install them now?",
-                PrimaryButtonText = "Update",
-                SecondaryButtonText = "Later",
-                XamlRoot = xamlRoot
+                Title = "Updates Available",
+                Content = $"{_availableUpdates?.Count()} module updates are available. Do you want to install them now?",
+                PrimaryButtonText = "Install",
+                CloseButtonText = "Later",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = mainWindow.Content.XamlRoot
             };
 
-            var result = await dialog.ShowAsync();
-            if (result == ContentDialogResult.Primary)
+            // Handle the primary button click (Install)
+            _updateDialog.PrimaryButtonClick += async (sender, args) =>
             {
-                _logger.LogInformation("User chose to install updates");
-                if (_moduleUpdateService is ModuleUpdateService updateService)
+                if (_isUpdating || _availableUpdates == null)
+                    return;
+
+                try
                 {
-                    await updateService.InstallUpdatesAsync(updates);
+                    _isUpdating = true;
+                    _logger.LogInformation("User clicked to install {count} updates", _availableUpdates.Count());
+
+                    // Change dialog to show installation progress
+                    if (_updateDialog != null)
+                    {
+                        _updateDialog.Content = "Installing updates...";
+                        _updateDialog.PrimaryButtonText = "";
+                        _updateDialog.CloseButtonText = "";
+                        _updateDialog.IsPrimaryButtonEnabled = false;
+                        _updateDialog.IsSecondaryButtonEnabled = false;
+                    }
+
+                    // Install updates
+                    if (_moduleUpdateService is ModuleUpdateService updateService)
+                    {
+                        await updateService.InstallUpdatesAsync(_availableUpdates);
+                    }
+
+                    // Update dialog to show completion
+                    if (_updateDialog != null)
+                    {
+                        _updateDialog.Content = "Updates installed successfully.";
+                        _updateDialog.CloseButtonText = "OK";
+                    }
                 }
-            }
-            else
-            {
-                _logger.LogInformation("User chose to skip updates for now");
-            }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error installing updates");
+
+                    // Update dialog to show error
+                    if (_updateDialog != null)
+                    {
+                        _updateDialog.Content = $"Error installing updates: {ex.Message}";
+                        _updateDialog.CloseButtonText = "Close";
+                    }
+                }
+                finally
+                {
+                    _isUpdating = false;
+                    _availableUpdates = null;
+                }
+            };
+
+            // Show the dialog asynchronously
+            _ = _updateDialog.ShowAsync();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error showing update content dialog");
-        }
-    }
-
-    private async void OnUpdateActionSelected(object? sender, ModuleUpdateActionEventArgs e)
-    {
-        if (e.InstallUpdates)
-        {
-            _logger.LogInformation("User chose to install {count} module updates", e.Updates.Count());
-
-            if (_moduleUpdateService is ModuleUpdateService updateService)
-            {
-                await updateService.InstallUpdatesAsync(e.Updates);
-            }
-        }
-        else
-        {
-            _logger.LogInformation("User chose to skip module updates for now");
+            _logger.LogError(ex, "Error showing update dialog: {message}", ex.Message);
         }
     }
 }
