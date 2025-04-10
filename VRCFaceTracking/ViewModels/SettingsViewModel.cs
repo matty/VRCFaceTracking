@@ -40,6 +40,11 @@ public partial class SettingsViewModel : ObservableRecipient
         Contributors = await GithubService.GetContributors("benaclejames/VRCFaceTracking");
     }
 
+    private async void LoadSentrySettings()
+    {
+        IsSentryEnabled = await _sentryService.GetSentryEnabledAsync();
+    }
+
     public SettingsViewModel(IThemeSelectorService themeSelectorService, GithubService githubService, SentryService sentryService)
     {
         _themeSelectorService = themeSelectorService;
@@ -61,16 +66,10 @@ public partial class SettingsViewModel : ObservableRecipient
         ToggleSentryCommand = new RelayCommand<bool>(
             async (enabled) =>
             {
-                IsSentryEnabled = enabled;
-                await _sentryService.SetSentryEnabledAsync(enabled);
+                await _sentryService.SetSentryEnabledAsync(IsSentryEnabled);
             });
 
         LoadContributors();
         LoadSentrySettings();
-    }
-
-    private async void LoadSentrySettings()
-    {
-        IsSentryEnabled = await _sentryService.GetSentryEnabledAsync();
     }
 }
