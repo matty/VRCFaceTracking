@@ -21,6 +21,7 @@ public class LocalSettingsService : ILocalSettingsService
 
     private IDictionary<string, object> _settings;
 
+    private static readonly SemaphoreSlim _readLock = new SemaphoreSlim(1, 1);
     private bool _isInitialized;
 
     public LocalSettingsService(IFileService fileService, IOptions<LocalSettingsOptions> options)
@@ -36,11 +37,23 @@ public class LocalSettingsService : ILocalSettingsService
 
     private async Task InitializeAsync()
     {
-        if (!_isInitialized)
+        await _readLock.WaitAsync();
+        try
         {
-            _settings = await Task.Run(() => _fileService.Read<IDictionary<string, object>>(_applicationDataFolder, _localSettingsFile)) ?? new Dictionary<string, object>();
+            if (!_isInitialized)
+            {
+                _settings = await Task.Run(() =>
+                                _fileService.Read<IDictionary<string, object>>(_applicationDataFolder,
+                                    _localSettingsFile)) ??
+                            new Dictionary<string, object>();
 
-            _isInitialized = true;
+                _isInitialized = true;
+            }
+        }
+        finally
+        {
+            // Always release the lock, even if an exception occurs
+            _readLock.Release();
         }
     }
 

@@ -1,4 +1,5 @@
 ﻿using System.Text;
+using System.Threading;
 using Newtonsoft.Json;
 using VRCFaceTracking.Core.Contracts.Services;
 
@@ -6,6 +7,8 @@ namespace VRCFaceTracking.Core.Services;
 
 public class FileService : IFileService
 {
+    private static readonly SemaphoreSlim _saveLock = new SemaphoreSlim(1, 1);
+
     public T Read<T>(string folderPath, string fileName)
     {
         var path = Path.Combine(folderPath, fileName);
@@ -20,13 +23,23 @@ public class FileService : IFileService
 
     public async Task Save<T>(string folderPath, string fileName, T content)
     {
-        if (!Directory.Exists(folderPath))
+        // Acquire the lock before performing file operations
+        await _saveLock.WaitAsync();
+        try
         {
-            Directory.CreateDirectory(folderPath);
-        }
+            if (!Directory.Exists(folderPath))
+            {
+                Directory.CreateDirectory(folderPath);
+            }
 
-        var fileContent = JsonConvert.SerializeObject(content);
-        await File.WriteAllTextAsync(Path.Combine(folderPath, fileName), fileContent, Encoding.UTF8);
+            var fileContent = JsonConvert.SerializeObject(content);
+            await File.WriteAllTextAsync(Path.Combine(folderPath, fileName), fileContent, Encoding.UTF8);
+        }
+        finally
+        {
+            // Always release the lock, even if an exception occurs
+            _saveLock.Release();
+        }
     }
 
     public void Delete(string folderPath, string fileName)
