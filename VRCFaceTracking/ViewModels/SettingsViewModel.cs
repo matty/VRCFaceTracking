@@ -66,7 +66,7 @@ public partial class SettingsViewModel : ObservableRecipient
         ToggleSentryCommand = new RelayCommand<bool>(
             async (enabled) =>
             {
-                await _sentryService.SetSentryEnabledAsync(IsSentryEnabled);
+                await _sentryService.SetSentryEnabledAsync(enabled);
             });
 
         LoadContributors();
