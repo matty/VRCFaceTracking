@@ -21,6 +21,7 @@ public class LocalSettingsService : ILocalSettingsService
 
     private IDictionary<string, object> _settings;
 
+    private static readonly SemaphoreSlim _settingsLock = new SemaphoreSlim(1, 1);
     private bool _isInitialized;
 
     public LocalSettingsService(IFileService fileService, IOptions<LocalSettingsOptions> options)
@@ -36,11 +37,31 @@ public class LocalSettingsService : ILocalSettingsService
 
     private async Task InitializeAsync()
     {
-        if (!_isInitialized)
-        {
-            _settings = await Task.Run(() => _fileService.Read<IDictionary<string, object>>(_applicationDataFolder, _localSettingsFile)) ?? new Dictionary<string, object>();
+        if (_isInitialized)
+            return;
 
+        await _settingsLock.WaitAsync();
+        try
+        {
+            if (!_isInitialized) // Double-check after acquiring the lock
+            {
+                // FileService.Read has its own locking for file access
+                _settings = await Task.Run(() =>
+                               _fileService.Read<IDictionary<string, object>>(_applicationDataFolder, _localSettingsFile))
+                           ?? new Dictionary<string, object>();
+
+                _isInitialized = true;
+            }
+        }
+        catch (Exception)
+        {
+            // In case of errors, use an empty dictionary
+            _settings = new Dictionary<string, object>();
             _isInitialized = true;
+        }
+        finally
+        {
+            _settingsLock.Release();
         }
     }
 
@@ -50,16 +71,39 @@ public class LocalSettingsService : ILocalSettingsService
         {
             if (ApplicationData.Current.LocalSettings.Values.TryGetValue(key, out var obj))
             {
-                return await Json.ToObjectAsync<T>((string)obj);
+                try
+                {
+                    return await Json.ToObjectAsync<T>((string)obj);
+                }
+                catch
+                {
+                    return defaultValue;
+                }
             }
         }
         else
         {
             await InitializeAsync();
 
-            if (_settings != null && _settings.TryGetValue(key, out var obj))
+            // We still need to lock access to the in-memory dictionary
+            await _settingsLock.WaitAsync();
+            try
             {
-                return await Json.ToObjectAsync<T>((string)obj);
+                if (_settings != null && _settings.TryGetValue(key, out var obj))
+                {
+                    try
+                    {
+                        return await Json.ToObjectAsync<T>((string)obj);
+                    }
+                    catch
+                    {
+                        return defaultValue;
+                    }
+                }
+            }
+            finally
+            {
+                _settingsLock.Release();
             }
         }
 
@@ -76,9 +120,22 @@ public class LocalSettingsService : ILocalSettingsService
         {
             await InitializeAsync();
 
-            _settings[key] = await Json.StringifyAsync(value);
+            string stringifiedValue = await Json.StringifyAsync(value);
 
-            await _fileService.Save(_applicationDataFolder, _localSettingsFile, _settings);
+            await _settingsLock.WaitAsync();
+            try
+            {
+                // We need to lock here because we're modifying the in-memory dictionary
+                // and then saving it all at once
+                _settings[key] = stringifiedValue;
+
+                // FileService.Save has its own locking for file access
+                await _fileService.Save(_applicationDataFolder, _localSettingsFile, _settings);
+            }
+            finally
+            {
+                _settingsLock.Release();
+            }
         }
     }
 
@@ -86,7 +143,7 @@ public class LocalSettingsService : ILocalSettingsService
     {
         var type = instance.GetType();
         var properties = type.GetProperties();
-        
+
         foreach (var property in properties)
         {
             var attributes = property.GetCustomAttributes(typeof(SavedSettingAttribute), false);
@@ -101,17 +158,15 @@ public class LocalSettingsService : ILocalSettingsService
             var defaultValue = savedSettingAttribute.Default();
 
             var setting = await ReadSettingAsync(settingName, defaultValue, savedSettingAttribute.ForceLocal());
-            object? convertedSetting;
             try
             {
-                convertedSetting = Convert.ChangeType(setting, property.PropertyType);
+                var convertedSetting = Convert.ChangeType(setting, property.PropertyType);
+                property.SetValue(instance, convertedSetting);
             }
             catch
             {
-                convertedSetting = defaultValue;
+                property.SetValue(instance, defaultValue);
             }
-
-            property.SetValue(instance, convertedSetting);
         }
     }
 
@@ -119,6 +174,8 @@ public class LocalSettingsService : ILocalSettingsService
     {
         var type = instance.GetType();
         var properties = type.GetProperties();
+
+        var tasks = new List<Task>();
 
         foreach (var property in properties)
         {
@@ -132,7 +189,9 @@ public class LocalSettingsService : ILocalSettingsService
             var savedSettingAttribute = (SavedSettingAttribute)attributes[0];
             var settingName = savedSettingAttribute.GetName();
 
-            await SaveSettingAsync(settingName, property.GetValue(instance), savedSettingAttribute.ForceLocal());
+            tasks.Add(SaveSettingAsync(settingName, property.GetValue(instance), savedSettingAttribute.ForceLocal()));
         }
+
+        await Task.WhenAll(tasks);
     }
 }
